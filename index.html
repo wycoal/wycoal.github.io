@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>公开任务树形图谱</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+    font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: #f0f2f5;
+    height: 100vh;
+    width: 100vw;
+    overflow: hidden;
+}
+
+/* 头部固定 */
+.header {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    background: white;
+    padding: 8px 16px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    height: 48px;
+}
+.header h1 { font-size: 15px; color: #333; white-space: nowrap; }
+.header .subtitle { font-size: 11px; color: #888; }
+.stats { display: flex; gap: 8px; }
+.stat-item { background: #f8fafc; padding: 3px 8px; border-radius: 4px; font-size: 10px; }
+.stat-item .label { color: #94a3b8; }
+.stat-item .value { color: #334155; font-weight: bold; }
+.legend-bar { display: flex; gap: 8px; margin-left: auto; }
+.legend-item { display: flex; align-items: center; gap: 3px; font-size: 9px; color: #64748b; }
+.legend-dot { width: 6px; height: 6px; border-radius: 2px; }
+
+/* 主画布 */
+.canvas-wrapper {
+    position: fixed;
+    top: 48px; left: 0; right: 0; bottom: 0;
+    overflow: hidden;
+    cursor: grab;
+    background: linear-gradient(135deg, #667eea08 0%, #764ba208 100%);
+}
+.canvas-wrapper:active { cursor: grabbing; }
+
+#svg-layer {
+    position: absolute;
+    top: 0; left: 0;
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* 树容器 - 居中 */
+#tree-root {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 1;
+}
+
+/* 树节点 */
+.tree-node {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+    margin: 0 3px;
+}
+
+/* 节点卡片 */
+.node-card {
+    background: white;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 5px 7px;
+    min-width: 85px;
+    max-width: 120px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    line-height: 1.25;
+}
+.node-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+}
+.node-card.active {
+    border-color: #667eea;
+    box-shadow: 0 0 0 2px rgba(102,126,234,0.2);
+}
+.node-card.root-node { border-color: #ff6b6b; background: #fff5f5; }
+.node-card.phase-node { border-color: #4ecdc4; background: #f0fffe; }
+.node-card.task-node { border-color: #45b7d1; background: #f0f9ff; }
+.node-card.subtask-node { border-color: #96ceb4; background: #f0fff5; }
+.node-card.ext-node { border-color: #feca57; background: #fffbf0; }
+
+.node-title {
+    font-size: 9.5px;
+    font-weight: 600;
+    color: #1e293b;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-all;
+    line-height: 1.3;
+}
+
+.node-meta {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    margin-top: 2px;
+    font-size: 8px;
+    color: #94a3b8;
+}
+.node-meta .progress-pill {
+    border-radius: 4px;
+    padding: 0px 4px;
+    font-size: 7px;
+    font-weight: 600;
+}
+.node-meta .progress-pill.done { background: #d1fae5; color: #059669; }
+.node-meta .progress-pill.doing { background: #fef3c7; color: #d97706; }
+.node-meta .progress-pill.todo { background: #dbeafe; color: #2563eb; }
+
+/* 展开按钮 */
+.expand-btn {
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: #667eea;
+    color: white;
+    border: none;
+    font-size: 9px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 2px;
+    transition: all 0.15s;
+    z-index: 2;
+    line-height: 1;
+}
+.expand-btn:hover { background: #5a67d8; transform: scale(1.1); }
+.expand-btn.collapsed::after { content: "+"; }
+.expand-btn.expanded::after { content: "−"; }
+.expand-btn.leaf::after { content: "●"; font-size: 5px; }
+.expand-btn.leaf { background: #cbd5e1; cursor: default; }
+
+/* 子节点容器 */
+.children-wrapper {
+    display: flex;
+    justify-content: center;
+    gap: 4px;
+    margin-top: 18px;
+    position: relative;
+    transition: all 0.25s ease;
+}
+.children-wrapper.collapsed { display: none; }
+
+/* 详情面板 */
+.detail-panel {
+    position: fixed;
+    top: 56px; right: 12px;
+    width: 320px;
+    max-height: calc(100vh - 68px);
+    background: white;
+    border-radius: 10px;
+    padding: 14px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+    z-index: 200;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(20px);
+    transition: all 0.2s ease;
+    overflow-y: auto;
+}
+.detail-panel.show {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(0);
+}
+.detail-panel .panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1.5px solid #f1f5f9;
+}
+.detail-panel .panel-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #1e293b;
+    line-height: 1.4;
+    padding-right: 8px;
+}
+.detail-panel .close-btn {
+    background: #f1f5f9;
+    border: none;
+    width: 22px; height: 22px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 13px;
+    color: #64748b;
+    flex-shrink: 0;
+}
+.detail-panel .close-btn:hover { background: #e2e8f0; }
+.detail-row {
+    display: flex;
+    margin-bottom: 5px;
+    font-size: 11px;
+    line-height: 1.5;
+}
+.detail-row .label {
+    color: #94a3b8;
+    width: 65px;
+    flex-shrink: 0;
+    font-weight: 500;
+}
+.detail-row .value { color: #334155; flex: 1; }
+.detail-row .value.desc {
+    background: #f8fafc;
+    padding: 6px 8px;
+    border-radius: 5px;
+    line-height: 1.5;
+}
+
+/* 缩放控制 */
+.zoom-controls {
+    position: fixed;
+    bottom: 16px; right: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    z-index: 100;
+}
+.zoom-btn {
+    width: 32px; height: 32px;
+    border-radius: 6px;
+    background: white;
+    border: 1px solid #e2e8f0;
+    cursor: pointer;
+    font-size: 16px;
+    color: #64748b;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    transition: all 0.15s;
+}
+.zoom-btn:hover { background: #f8fafc; color: #334155; }
+
+.footer {
+    position: fixed;
+    bottom: 4px; left: 50%;
+    transform: translateX(-50%);
+    color: #94a3b8;
+    font-size: 9px;
+    z-index: 100;
+    background: rgba(255,255,255,0.8);
+    padding: 2px 10px;
+    border-radius: 10px;
+}
+</style>
+</head>
+<body>
+<div class="header">
+    <div>
+        <h1>🌳 公开任务树形图谱</h1>
+        <div class="subtitle">点击节点查看详情 · 点击 +/− 展开子节点 · 拖拽移动 · 滚轮缩放</div>
+    </div>
+    <div class="stats" id="stats-bar"></div>
+    <div class="legend-bar">
+        <span class="legend-item"><span class="legend-dot" style="background:#ff6b6b"></span>总项目</span>
+        <span class="legend-item"><span class="legend-dot" style="background:#4ecdc4"></span>一级模块</span>
+        <span class="legend-item"><span class="legend-dot" style="background:#45b7d1"></span>二级任务</span>
+        <span class="legend-item"><span class="legend-dot" style="background:#96ceb4"></span>三级子任务</span>
+        <span class="legend-item"><span class="legend-dot" style="background:#feca57"></span>扩展任务</span>
+    </div>
+</div>
+
+<div class="canvas-wrapper" id="canvas-wrapper">
+    <svg id="svg-layer"></svg>
+    <div id="tree-root"></div>
+</div>
+
+<div class="zoom-controls">
+    <button class="zoom-btn" onclick="zoomIn()">+</button>
+    <button class="zoom-btn" onclick="zoomOut()">−</button>
+    <button class="zoom-btn" onclick="resetView()" title="重置">⌂</button>
+</div>
+
+<div class="footer">拖拽移动画布 · 滚轮缩放 · Esc 关闭面板</div>
+
+<div class="detail-panel" id="detail-panel">
+    <div class="panel-header">
+        <div class="panel-title" id="panel-title"></div>
+        <button class="close-btn" onclick="closePanel()">×</button>
+    </div>
+    <div id="panel-content"></div>
+</div>
+
+<script>
+const taskData = {"id": 0, "title": "公开任务总览", "description": "所有公开任务的汇总视图", "progress": 0, "start": "", "end": "", "assignees": "", "creator": "", "level": 0, "ext": false, "children": [{"id": 3, "title": "智电融合综合平台——基于人工智能与物联网的新能源电力交易与智能管理项目3", "description": "以AI+IoT+新能源+电力交易+废弃物回收闭环为核心，构建面向新型电力系统的数字化运营与科研创新平台，覆盖新能源发电、智能电网管理、智慧电力交易、设备退役回收全生命周期", "progress": 0, "start": "", "end": "", "assignees": "汪洋1", "creator": "汪洋1", "level": 1, "ext": false, "children": [{"id": 4, "title": "新能源多时空尺度功率预测理论与方法4", "description": "研究超短期、短期、概率预测、集群预测及气象大模型联动的新能源功率预测方法，提升预测精度与鲁棒性", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 何浩璇5, 席剑飞17, 梁导伦18, 李和平19", "creator": "汪洋1", "level": 2, "ext": false, "children": [{"id": 5, "title": "超短期功率预测（15分钟-4小时）5", "description": "融合地面气象站、卫星云图、雷达回波的多源数据融合框架，构建Transformer+TPA-LSTM预测模型，采用Quantile Mapping + TPA-LSTM混合矫正模型，超短期预测精度≥92%", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 何浩璇5, 席剑飞17, 梁导伦18, 李和平19", "creator": "汪洋1", "level": 3, "ext": false, "children": []}, {"id": 6, "title": "短期功率预测（4小时-72小时）6", "description": "基于WRF模型的区域高分辨率数值天气预报系统，构建PINN-iTransformer物理约束功率预测模型，短期预测精度≥88%", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 何浩璇5, 席剑飞17, 梁导伦18, 李和平19", "creator": "汪洋1", "level": 3, "ext": false, "children": []}, {"id": 7, "title": "概率预测与不确定性量化7", "description": "基于分位数回归、贝叶斯神经网络构建预测区间估计模型，研究极端天气鲁棒预测方法，预测区间覆盖率≥90%", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 何浩璇5, 席剑飞17, 梁导伦18, 李和平19", "creator": "汪洋1", "level": 3, "ext": false, "children": []}, {"id": 8, "title": "集群风光场站时空关联预测8", "description": "基于图神经网络构建多风光场站时空相关性模型，研究联邦学习框架下的跨场站协同预测，集群预测精度较单点提升3-5%", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 何浩璇5, 席剑飞17, 梁导伦18, 李和平19", "creator": "汪洋1", "level": 3, "ext": false, "children": []}, {"id": 9, "title": "气象大模型联动与电力专用预测大模型（扩展）9", "description": "构建气象大模型与电力功率预测模型的联动架构，预训练与微调电力专用预测大模型Energy-GPT，超短期预测精度提升至94%+", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 何浩璇5, 席剑飞17, 梁导伦18, 李和平19", "creator": "汪洋1", "level": 3, "ext": true, "children": []}]}, {"id": 10, "title": "基于强化学习的电力市场交易策略优化10", "description": "研究多主体博弈建模、风险约束鲁棒交易、电碳联合交易、交易仿真沙盒及LLM智能交易助手，提升交易收益与策略鲁棒性", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 黄忠远4, 席剑飞17, 梁导伦18, 李和平19, 赵庆玲20", "creator": "汪洋1", "level": 2, "ext": false, "children": [{"id": 11, "title": "多主体不完全信息博弈建模11", "description": "基于MADDPG构建多发电商报价策略框架，采用贝叶斯博弈近似解决不完全信息问题，策略收敛后利润提升≥8%", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 黄忠远4, 席剑飞17, 梁导伦18, 李和平19, 赵庆玲20", "creator": "汪洋1", "level": 3, "ext": false, "children": []}, {"id": 12, "title": "考虑风险约束的鲁棒交易优化12", "description": "将CVaR风险度量嵌入报价模型，研究新能源预测误差驱动的自适应策略调整，实现多市场联合优化，交易收益提升3-5%", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 黄忠远4, 席剑飞17, 梁导伦18, 李和平19, 赵庆玲20", "creator": "汪洋1", "level": 3, "ext": false, "children": []}, {"id": 13, "title": "电力-碳市场联合交易优化13", "description": "研究碳排放权价格预测与碳资产组合优化，构建绿电交易与绿证核发联动模型，设计区块链存证与碳足迹溯源智能合约", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 黄忠远4, 席剑飞17, 梁导伦18, 李和平19, 赵庆玲20", "creator": "汪洋1", "level": 3, "ext": false, "children": []}, {"id": 14, "title": "交易仿真沙盒环境（Digital Trading Twin）14", "description": "构建基于历史交易数据的电力市场回放仿真引擎，支持多市场规则灵活配置，实现可视化策略回测与绩效归因分析", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 黄忠远4, 席剑飞17, 梁导伦18, 李和平19, 赵庆玲20", "creator": "汪洋1", "level": 3, "ext": false, "children": []}, {"id": 15, "title": "大语言模型驱动的智能交易助手与Nash-Q博弈（扩展）15", "description": "构建LLM-Agent智能交易助手，研究多智能体Nash-Q强化学习，利用大模型实现策略解释与归因，Nash-Q收敛速度较MADDPG提升≥20%", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 黄忠远4, 席剑飞17, 梁导伦18, 李和平19, 赵庆玲20", "creator": "汪洋1", "level": 3, "ext": true, "children": []}]}, {"id": 16, "title": "5G+IoT广域电网同步测量与数字孪生系统16", "description": "研究5G+IoT同步测量系统、设备数字孪生建模、边缘AI推理引擎、配电网稳定性分析及AI Agent自主智能体，实现电网数字化管控", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 李政6, 冯红翠7, 宋鸿达8, 赵明宇9, 吴炎11, 杨奔12, 甘洋13, 裴浩翔14, 李俊驰15, 葛立超16, 席剑飞17, 梁导伦18, 李和平19", "creator": "汪洋1", "level": 2, "ext": false, "children": [{"id": 17, "title": "5G+IoT广域电网同步测量系统17", "description": "基于5G uRLLC构建广域同步测量数据传输系统，研发边缘计算网关数据预处理与异常检测，构建百万级测点秒级接入的时序数据库架构", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 李政6, 冯红翠7, 宋鸿达8, 赵明宇9, 吴炎11, 杨奔12, 甘洋13, 裴浩翔14, 李俊驰15, 葛立超16, 席剑飞17, 梁导伦18, 李和平19", "creator": "汪洋1", "level": 3, "ext": false, "children": []}, {"id": 18, "title": "电网设备数字孪生体建模18", "description": "构建变压器、断路器等关键设备的多物理场参数化模型，基于OPC UA实现实时数据映射与数字孪生同步，开发3D可视化与轻量化渲染引擎", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 李政6, 冯红翠7, 宋鸿达8, 赵明宇9, 吴炎11, 杨奔12, 甘洋13, 裴浩翔14, 李俊驰15, 葛立超16, 席剑飞17, 梁导伦18, 李和平19", "creator": "汪洋1", "level": 3, "ext": false, "children": []}, {"id": 19, "title": "轻量化AI推理引擎19", "description": "研发面向边缘设备的模型压缩技术，优化ARM架构+NPU的端侧推理，构建联邦学习框架实现跨域数据协同训练", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 李政6, 冯红翠7, 宋鸿达8, 赵明宇9, 吴炎11, 杨奔12, 甘洋13, 裴浩翔14, 李俊驰15, 葛立超16, 席剑飞17, 梁导伦18, 李和平19", "creator": "汪洋1", "level": 3, "ext": false, "children": []}, {"id": 20, "title": "配电网高渗透率DER稳定性分析20", "description": "研究分布式光伏高渗透率下的配电网电压稳定性，构建源网荷储协调控制与无功优化策略，实现微电网并离网快速切换", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 李政6, 冯红翠7, 宋鸿达8, 赵明宇9, 吴炎11, 杨奔12, 甘洋13, 裴浩翔14, 李俊驰15, 葛立超16, 席剑飞17, 梁导伦18, 李和平19", "creator": "汪洋1", "level": 3, "ext": false, "children": []}, {"id": 21, "title": "AI Agent自主智能体与多智能体协同系统（扩展）21", "description": "构建具备感知-推理-规划-执行-反思闭环能力的电力系统AI Agent，实现NeRF实景建模与数字孪生融合，研发分布式多智能体自主协同系统", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 李政6, 冯红翠7, 宋鸿达8, 赵明宇9, 吴炎11, 杨奔12, 甘洋13, 裴浩翔14, 李俊驰15, 葛立超16, 席剑飞17, 梁导伦18, 李和平19", "creator": "汪洋1", "level": 3, "ext": true, "children": []}]}, {"id": 22, "title": "虚拟电厂（VPP）聚合调度与多能互补优化22", "description": "研究分布式资源聚合、多VPP联盟博弈、需求响应调度、V2G大规模调度及大模型驱动的VPP智能运营，实现VPP高效协同调度", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 穆萨2, 蒋梁涛3, 席剑飞17, 李和平19, 赵庆玲20", "creator": "汪洋1", "level": 2, "ext": false, "children": [{"id": 23, "title": "分布式资源统一建模与聚合23", "description": "构建光伏、储能、可控负荷等DER的等值建模，实现VPP内部潮流计算与容量评估，建立用户行为不确定性模型", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 穆萨2, 蒋梁涛3, 席剑飞17, 李和平19, 赵庆玲20", "creator": "汪洋1", "level": 3, "ext": false, "children": []}, {"id": 24, "title": "多VPP联盟博弈与收益分配24", "description": "基于Shapley值构建多VPP合作博弈收益分配机制，采用区块链智能合约实现去中心化交易与自动结算，研究跨省VPP协同交易策略", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 穆萨2, 蒋梁涛3, 席剑飞17, 李和平19, 赵庆玲20", "creator": "汪洋1", "level": 3, "ext": false, "children": []}, {"id": 25, "title": "需求响应资源调度与激励机制25", "description": "研究工业可中断负荷、商业空调、电动汽车V2G的弹性调度优化，设计实时电价与峰谷电价联合激励机制，开发用户侧用能可视化APP", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 穆萨2, 蒋梁涛3, 席剑飞17, 李和平19, 赵庆玲20", "creator": "汪洋1", "level": 3, "ext": false, "children": []}, {"id": 26, "title": "车网互动（V2G）大规模调度26", "description": "研究电动汽车充电行为预测与充电站负荷优化，分析V2G双向充放电对电网调频的响应特性，构建基于MPC的V2G实时调度模型", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 穆萨2, 蒋梁涛3, 席剑飞17, 李和平19, 赵庆玲20", "creator": "汪洋1", "level": 3, "ext": false, "children": []}, {"id": 27, "title": "大模型驱动的VPP智能运营与多能互补决策（扩展）27", "description": "基于BERT4ST构建VPP负荷-发电联合预测模型，利用大模型实现场景模拟与中长期规划，构建电/热/冷/气多能流协同优化调度机制", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 穆萨2, 蒋梁涛3, 席剑飞17, 李和平19, 赵庆玲20", "creator": "汪洋1", "level": 3, "ext": true, "children": []}]}, {"id": 28, "title": "新能源装备多物理场仿真研究28", "description": "研究风机叶片、光伏组件、储能电池的多物理场耦合仿真，实现装备全生命周期性能分析", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 李政6, 冯红翠7, 宋鸿达8, 赵明宇9, 吴炎11, 杨奔12, 甘洋13, 裴浩翔14, 李俊驰15, 葛立超16, 席剑飞17, 梁导伦18, 李和平19", "creator": "汪洋1", "level": 2, "ext": false, "children": [{"id": 29, "title": "风力机叶片气动-结构-声学耦合仿真与热解回收多物理场建模29", "description": "基于CFD/FEA构建风机叶片气动-结构-声学耦合模型，建立热解回收过程热-化学-流-固多物理场耦合仿真模型", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 李政6, 冯红翠7, 宋鸿达8, 赵明宇9, 吴炎11, 杨奔12, 甘洋13, 裴浩翔14, 李俊驰15, 葛立超16, 席剑飞17, 梁导伦18, 李和平19", "creator": "汪洋1", "level": 3, "ext": false, "children": []}, {"id": 30, "title": "光伏组件热-电-光耦合机理建模与热解回收仿真30", "description": "构建光伏电池热电耦合模型，研究热斑效应形成机理与热演化仿真，建立光伏组件热解回收热-化学-光耦合仿真模型", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 李政6, 冯红翠7, 宋鸿达8, 赵明宇9, 吴炎11, 杨奔12, 甘洋13, 裴浩翔14, 李俊驰15, 葛立超16, 席剑飞17, 梁导伦18, 李和平19", "creator": "汪洋1", "level": 3, "ext": false, "children": []}, {"id": 31, "title": "储能电池电-热-化耦合与热失控仿真31", "description": "构建储能电池电-热-化耦合模型，研究热失控触发机理与演化过程，建立热失控预警与抑制策略", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 李政6, 冯红翠7, 宋鸿达8, 赵明宇9, 吴炎11, 杨奔12, 甘洋13, 裴浩翔14, 李俊驰15, 葛立超16, 席剑飞17, 梁导伦18, 李和平19", "creator": "汪洋1", "level": 3, "ext": false, "children": []}]}, {"id": 32, "title": "退役新能源设备智能回收闭环与碳足迹溯源32", "description": "研究退役设备智能预测、梯次利用决策、回收网络优化、碳足迹溯源，补齐新能源装备全生命周期最后环节", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 李政6, 冯红翠7, 宋鸿达8, 赵明宇9, 吴炎11, 杨奔12, 甘洋13, 裴浩翔14, 李俊驰15, 葛立超16, 席剑飞17, 梁导伦18, 李和平19", "creator": "汪洋1", "level": 2, "ext": false, "children": [{"id": 33, "title": "退役设备寿命预测与梯次利用决策33", "description": "基于AI模型预测退役设备剩余寿命，构建梯次利用与再生利用的决策模型，实现退役设备价值最大化", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 李政6, 冯红翠7, 宋鸿达8, 赵明宇9, 吴炎11, 杨奔12, 甘洋13, 裴浩翔14, 李俊驰15, 葛立超16, 席剑飞17, 梁导伦18, 李和平19", "creator": "汪洋1", "level": 3, "ext": false, "children": []}, {"id": 34, "title": "回收网络优化与智能调度34", "description": "构建退役设备回收网络优化模型，研究回收车辆智能调度与路径规划，实现回收成本最小化与效率最大化", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 李政6, 冯红翠7, 宋鸿达8, 赵明宇9, 吴炎11, 杨奔12, 甘洋13, 裴浩翔14, 李俊驰15, 葛立超16, 席剑飞17, 梁导伦18, 李和平19", "creator": "汪洋1", "level": 3, "ext": false, "children": []}, {"id": 35, "title": "设备全生命周期碳足迹溯源35", "description": "构建新能源装备从生产、运营到退役回收的全生命周期碳足迹核算模型，利用区块链实现碳足迹数据不可篡改溯源", "progress": 0, "start": "", "end": "", "assignees": "汪洋1, 李政6, 冯红翠7, 宋鸿达8, 赵明宇9, 吴炎11, 杨奔12, 甘洋13, 裴浩翔14, 李俊驰15, 葛立超16, 席剑飞17, 梁导伦18, 李和平19", "creator": "汪洋1", "level": 3, "ext": false, "children": []}]}]}, {"id": 1, "title": "做饭1", "description": "准备晚餐", "progress": 0, "start": "2026.04", "end": "", "assignees": "汪洋1", "creator": "汪洋1", "level": 1, "ext": false, "children": [{"id": 2, "title": "烧火2", "description": "生火做饭", "progress": 80, "start": "2026.04", "end": "2026.04", "assignees": "汪洋1", "creator": "汪洋1", "level": 2, "ext": false, "children": []}]}]};
+
+function countTasks(node) {
+    let count = 1;
+    if (node.children) node.children.forEach(c => count += countTasks(c));
+    return count;
+}
+function countCompleted(node) {
+    let count = node.progress === 100 ? 1 : 0;
+    if (node.children) node.children.forEach(c => count += countCompleted(c));
+    return count;
+}
+const total = countTasks(taskData);
+const completed = countCompleted(taskData);
+document.getElementById('stats-bar').innerHTML = `
+    <div class="stat-item"><span class="label">节点</span> <span class="value">${total}</span></div>
+    <div class="stat-item"><span class="label">完成</span> <span class="value">${completed}</span></div>
+    <div class="stat-item"><span class="label">进度</span> <span class="value">${Math.round(completed/total*100)}%</span></div>
+`;
+
+function getNodeClass(level, ext) {
+    const base = ['root-node','phase-node','task-node','subtask-node'][level] || 'subtask-node';
+    return ext ? base + ' ext-node' : base;
+}
+function getProgressClass(p) {
+    return p === 100 ? 'done' : p > 0 ? 'doing' : 'todo';
+}
+function getProgressLabel(p) {
+    return p === 100 ? '已完成' : p > 0 ? '进行中' : '待开始';
+}
+
+function renderNode(node) {
+    const hasChildren = node.children && node.children.length > 0;
+    const nodeClass = getNodeClass(node.level, node.ext);
+    const progressClass = getProgressClass(node.progress);
+
+    let html = '<div class="tree-node" id="node-' + node.id + '">';
+    html += '<div class="node-card ' + nodeClass + '" onclick="showDetail(' + node.id + ')">';
+    html += '<div class="node-title">' + node.title + '</div>';
+    html += '<div class="node-meta">';
+    html += '<span class="progress-pill ' + progressClass + '">' + getProgressLabel(node.progress) + '</span>';
+    html += '<span>' + (node.start || '—') + '</span>';
+    html += '</div></div>';
+
+    if (hasChildren) {
+        html += '<button class="expand-btn collapsed" id="btn-' + node.id + '" onclick="toggleChildren(event, ' + node.id + ')"></button>';
+        html += '<div class="children-wrapper collapsed" id="children-' + node.id + '">';
+        node.children.forEach(child => { html += renderNode(child); });
+        html += '</div>';
+    } else {
+        html += '<button class="expand-btn leaf"></button>';
+    }
+    html += '</div>';
+    return html;
+}
+
+document.getElementById('tree-root').innerHTML = renderNode(taskData);
+
+function toggleChildren(e, id) {
+    e.stopPropagation();
+    const wrapper = document.getElementById('children-' + id);
+    const btn = document.getElementById('btn-' + id);
+    if (!wrapper) return;
+    wrapper.classList.toggle('collapsed');
+    btn.classList.toggle('collapsed');
+    btn.classList.toggle('expanded');
+    setTimeout(drawLines, 260);
+}
+
+function showDetail(id) {
+    const node = findNode(taskData, id);
+    if (!node) return;
+    document.getElementById('panel-title').textContent = node.title;
+    document.getElementById('panel-content').innerHTML = `
+        <div class="detail-row"><span class="label">描述</span><div class="value desc">${node.description || '无'}</div></div>
+        <div class="detail-row"><span class="label">负责人</span><span class="value">${node.assignees || '未分配'}</span></div>
+        <div class="detail-row"><span class="label">创建者</span><span class="value">${node.creator || '未知'}</span></div>
+        <div class="detail-row"><span class="label">进度</span><span class="value">${node.progress || 0}%</span></div>
+        <div class="detail-row"><span class="label">时间范围</span><span class="value">${node.start || '未设置'} ~ ${node.end || '未设置'}</span></div>
+        <div class="detail-row"><span class="label">层级</span><span class="value">${['总项目','一级模块','二级任务','三级子任务'][node.level] || '其他'}</span></div>
+        ${node.ext ? '<div class="detail-row"><span class="label">类型</span><span class="value" style="color:#d97706;font-weight:600;">扩展任务</span></div>' : ''}
+    `;
+    document.getElementById('detail-panel').classList.add('show');
+}
+
+function closePanel() {
+    document.getElementById('detail-panel').classList.remove('show');
+}
+
+function findNode(root, id) {
+    if (root.id === id) return root;
+    if (root.children) {
+        for (let c of root.children) {
+            const found = findNode(c, id);
+            if (found) return found;
+        }
+    }
+    return null;
+}
+
+// SVG 连接线
+function drawLines() {
+    const svg = document.getElementById('svg-layer');
+    const wrapper = document.getElementById('canvas-wrapper');
+    svg.innerHTML = '';
+    svg.setAttribute('width', wrapper.scrollWidth);
+    svg.setAttribute('height', wrapper.scrollHeight);
+
+    function drawFrom(parentId) {
+        const parentBtn = document.getElementById('btn-' + parentId);
+        const childrenWrapper = document.getElementById('children-' + parentId);
+        if (!parentBtn || !childrenWrapper || childrenWrapper.classList.contains('collapsed')) return;
+
+        const pRect = parentBtn.getBoundingClientRect();
+        const wRect = wrapper.getBoundingClientRect();
+        const px = pRect.left + pRect.width/2 - wRect.left + wrapper.scrollLeft;
+        const py = pRect.top + pRect.height/2 - wRect.top + wrapper.scrollTop;
+
+        const childNodes = childrenWrapper.querySelectorAll(':scope > .tree-node');
+        childNodes.forEach(child => {
+            const card = child.querySelector('.node-card');
+            if (!card) return;
+            const cRect = card.getBoundingClientRect();
+            const cx = cRect.left + cRect.width/2 - wRect.left + wrapper.scrollLeft;
+            const cy = cRect.top - wRect.top + wrapper.scrollTop;
+
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            const d = `M ${px} ${py} C ${px} ${py + 16}, ${cx} ${cy - 16}, ${cx} ${cy}`;
+            path.setAttribute('d', d);
+            path.setAttribute('fill', 'none');
+            path.setAttribute('stroke', '#cbd5e1');
+            path.setAttribute('stroke-width', '1.5');
+            svg.appendChild(path);
+
+            const childId = parseInt(child.id.replace('node-', ''));
+            drawFrom(childId);
+        });
+    }
+    drawFrom(taskData.id);
+}
+
+// 画布拖拽 + 缩放
+let scale = 1;
+let panX = 0, panY = 0;
+let isDragging = false;
+let lastX = 0, lastY = 0;
+
+const canvas = document.getElementById('canvas-wrapper');
+const treeRoot = document.getElementById('tree-root');
+
+function updateTransform() {
+    treeRoot.style.transform = `translate(calc(-50% + ${panX}px), calc(-50% + ${panY}px)) scale(${scale})`;
+    drawLines();
+}
+
+canvas.addEventListener('mousedown', e => {
+    if (e.target.closest('.node-card') || e.target.closest('.expand-btn')) return;
+    isDragging = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    canvas.style.cursor = 'grabbing';
+});
+document.addEventListener('mousemove', e => {
+    if (!isDragging) return;
+    panX += (e.clientX - lastX) / scale;
+    panY += (e.clientY - lastY) / scale;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    updateTransform();
+});
+document.addEventListener('mouseup', () => {
+    isDragging = false;
+    canvas.style.cursor = 'grab';
+});
+
+canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    scale = Math.max(0.3, Math.min(3, scale * delta));
+    updateTransform();
+}, { passive: false });
+
+function zoomIn() { scale = Math.min(3, scale * 1.2); updateTransform(); }
+function zoomOut() { scale = Math.max(0.3, scale / 1.2); updateTransform(); }
+function resetView() { scale = 1; panX = 0; panY = 0; updateTransform(); }
+
+// 初始绘制
+setTimeout(() => {
+    drawLines();
+    // 默认展开根节点的一级子节点
+    const rootBtn = document.getElementById('btn-' + taskData.id);
+    if (rootBtn && rootBtn.classList.contains('collapsed')) {
+        toggleChildren({stopPropagation:()=>{}}, taskData.id);
+    }
+}, 200);
+
+window.addEventListener('resize', () => setTimeout(drawLines, 100));
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closePanel(); });
+</script>
+</body>
+</html>
