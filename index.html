@@ -22,9 +22,12 @@ html, body {
 .deck-wrapper {
     flex-shrink: 0;
     position: relative;
+    box-sizing: content-box;
 }
 .deck {
-    position: relative;
+    position: absolute;
+    top: 0;
+    left: 0;
     width: 1280px; height: 720px;
     box-shadow: 0 10px 40px rgba(0,0,0,0.5);
     background: #fff;
@@ -397,16 +400,17 @@ html, body {
 
     const SLIDE_W = 1280;
     const SLIDE_H = 720;
+    const BTN_RESERVE = 50;
     function fitToScreen() {
         const sw = window.innerWidth;
-        const sh = window.innerHeight;
-        const scale = Math.min(sw / SLIDE_W, sh / SLIDE_H);
+        const sh = window.innerHeight - BTN_RESERVE;
+        const scale = Math.min(sw / SLIDE_W, sh / SLIDE_H, 1);
         const deck = document.querySelector('.deck');
         const wrapper = document.getElementById('deckWrapper');
         if (deck) deck.style.transform = 'scale(' + scale + ')';
         if (wrapper) {
             wrapper.style.width = (SLIDE_W * scale) + 'px';
-            wrapper.style.height = (SLIDE_H * scale) + 'px';
+            wrapper.style.height = (SLIDE_H * scale + BTN_RESERVE) + 'px';
         }
     }
     window.addEventListener('resize', fitToScreen);
